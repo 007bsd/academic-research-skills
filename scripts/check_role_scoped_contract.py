@@ -83,11 +83,29 @@ PHASE1_LIVE_GRAMMAR_WITNESS = (
     "`none`, or any other sentinel"
 )
 PHASE1_TERMINAL_PREFLIGHT_WITNESS = (
-    "Terminal preflight (mandatory): inspect the text you are about to send. "
-    "In every non-mandatory scoring-plan subsection, the literal key "
-    "`what_triggers_fatal:` must occur zero times; delete the entire line if "
-    "it appears. In every mandatory subsection, that key must occur exactly "
-    "once. Do not send until these counts hold"
+    "Terminal Phase 1 structural preflight (mandatory). Silently inspect the "
+    "exact text you are about to send: "
+    "1. The only H2 sections are exactly one `## Contract Paraphrase` followed "
+    "by exactly one `## Scoring Plan`. The paraphrase meets "
+    "`measurement_procedure.paraphrase_minimum_dimensions`: `\"all\"` means "
+    "one paragraph per contract dimension; integer `k` means at least `k` "
+    "paragraphs tied to distinct dimensions. "
+    "2. Every `### <Dn>: <name>` heading copies the contract ID and name "
+    "exactly, and only dimensions eligible for your dispatch role appear. "
+    "3. Each scoring-plan subsection contains exactly one unbulleted "
+    "`dimension_id:`, `what_to_look_for:`, `what_triggers_block:`, and "
+    "`what_triggers_warn:` line; its block and warn texts are distinct. "
+    "4. In every non-mandatory subsection, the literal key "
+    "`what_triggers_fatal:` occurs zero times; delete the entire line and any "
+    "sentinel if it appears. In every mandatory subsection, that key occurs "
+    "exactly once and its text is distinct from block and warn. "
+    "5. No `## Dimension Scores`, `## Review Body`, "
+    "`## Failure Condition Checks`, `## Editorial Decision`, "
+    "`dimension_scores`, `review_body`, or bare `editorial_decision=` "
+    "appears, and no manuscript-specific claim appears. "
+    "6. The final nonblank output line is exactly "
+    "`[CONTRACT-ACKNOWLEDGED]`. "
+    "Do not send until every check holds."
 )
 PHASE2_WITNESSES = (
     "`dimension_id: <Dn>` and `rationale: <nonempty explanation>`",
@@ -101,14 +119,52 @@ PHASE2_NO_DISSENT_WITNESS = (
     "If no dimension needs dissent, omit the entire `## Scoring Plan Dissent` "
     "section; never emit an empty section or a `none` placeholder"
 )
-PHASE2_TERMINAL_DISSENT_PREFLIGHT_WITNESS = (
-    "Terminal dissent preflight (mandatory): inspect the text you are about "
-    "to send. If it contains a line exactly `## Scoring Plan Dissent`, that "
-    "section must contain exactly one unbulleted `dimension_id: <Dn>` line "
-    "and exactly one unbulleted `rationale: <nonempty explanation>` line. If "
-    "you have no real one-dimension dissent, delete the heading and every "
-    "placeholder line beneath it before sending. `none`, `omitted`, "
-    "`not applicable`, and similar placeholders are never a dissent."
+PHASE2_TERMINAL_PREFLIGHT_WITNESS = (
+    "Terminal Phase 2 structural preflight (mandatory). Silently inspect the "
+    "exact text you are about to send against your supplied Phase 1: "
+    "1. Dissent: if your Phase 2 view differs on exactly one dimension, "
+    "include `## Scoring Plan Dissent` with exactly one unbulleted "
+    "`dimension_id: <Dn>` line and exactly one unbulleted "
+    "`rationale: <nonempty explanation>` line. If it differs on two or more, "
+    "abort with `[PROTOCOL-VIOLATION: multi_dissent=true]` instead of drafting "
+    "a card. If none differs, delete the heading and every placeholder beneath "
+    "it; `none`, `omitted`, and `not applicable` are never a dissent. "
+    "2. Sections and role: emit exactly one `## Dimension Scores` followed by "
+    "exactly one `## Review Body`. Put exactly one report-level "
+    "`contract_role: <your dispatch role>` immediately before "
+    "`## Dimension Scores` and nowhere else. Delete "
+    "`## Failure Condition Checks`, `## Editorial Decision`, and every bare "
+    "`editorial_decision=` line. "
+    "3. Dimensions and abstentions: emit every contract dimension exactly "
+    "once with its exact ID/name. An eligible dimension uses `block`, `warn`, "
+    "`pass`, or `not_assessed`; eligible `not_assessed` has exactly one "
+    "non-empty `abstain_reason:`, while an ineligible dimension uses only "
+    "`score: not_assessed` with no `abstain_reason:`. No other score carries "
+    "`abstain_reason:`. "
+    "4. Trigger binding: for every `warn` or `block`, the quoted `trigger:` "
+    "text is a character-for-character substring of the matching Phase 1 "
+    "trigger kind for the same dimension. Never paraphrase it. `pass` and "
+    "`not_assessed` have no `trigger:`. "
+    "5. Fatality: every mandatory `block` has exactly one `block_class:`; "
+    "`fatal` binds to the Phase 1 fatal trigger, a dissented dimension cannot "
+    "be fatal, and a non-mandatory dimension has no `block_class:`. "
+    "6. Finding grammar: apply the role-specific grammar above. For a scoring "
+    "seat, every weakness is its own `### W<n>` subsection with exactly one "
+    "parseable Severity, one typed Evidence Anchor, and one Confidence; every "
+    "strength has a typed Evidence Anchor and no Severity. If either finding "
+    "polarity is empty, include its required Coverage Receipt. For the DA, "
+    "emit exactly one `#### CRITICAL` table and one `#### MAJOR` table, both "
+    "present even when empty, with no standalone Severity. Each table header "
+    "contains exactly one column named `#` and exactly one named "
+    "`Evidence Anchor`; every row is outer-pipe-delimited with the header's "
+    "column count, and CRITICAL IDs are unique and dense `C1..Cn`. "
+    "7. Anchors: no findings share an anchor. Every anchor uses a valid typed "
+    "`<type>: <locator>` value with balanced wrappers. Every `text:` quoted "
+    "excerpt is at most 25 words, and every `absence:` anchor uses the exact "
+    "required separators and non-empty fields. "
+    "8. Bands: assign each weakness by its own decision impact, never by a "
+    "target distribution or bundled cluster; a Critical is singleton "
+    "rejection-level. Do not send until every check holds."
 )
 PHASE2_ROLE_PLACEMENT_WITNESS_SUFFIX = (
     "Place this single report-level line immediately before "
@@ -404,6 +460,10 @@ def check(root: Path) -> list[str]:
             errors.append(f"{rel}: Phase 1 live-grammar witness missing")
         if norm_ws(PHASE1_TERMINAL_PREFLIGHT_WITNESS) not in phase1_norm:
             errors.append(f"{rel}: Phase 1 terminal-preflight witness missing")
+        if not phase1_norm.endswith(
+            norm_ws(PHASE1_TERMINAL_PREFLIGHT_WITNESS)
+        ):
+            errors.append(f"{rel}: Phase 1 terminal preflight is not terminal")
         score_scope = (
             "Score only dimensions whose `eligible_roles` includes "
             f"`{role}`; every other dimension must say `score: not_assessed`"
@@ -419,7 +479,7 @@ def check(root: Path) -> list[str]:
         )
         for witness in (
             PHASE2_NO_DISSENT_WITNESS,
-            PHASE2_TERMINAL_DISSENT_PREFLIGHT_WITNESS,
+            PHASE2_TERMINAL_PREFLIGHT_WITNESS,
             role_placement_witness,
         ):
             if norm_ws(witness) not in phase2_norm:
@@ -440,7 +500,7 @@ def check(root: Path) -> list[str]:
             errors.append(f"{rel}: Phase 2 anchor-value grammar witness missing")
         phase2_content_norm = phase2_norm.removesuffix(" ---")
         if not phase2_content_norm.endswith(
-            norm_ws(PHASE2_TERMINAL_DISSENT_PREFLIGHT_WITNESS)
+            norm_ws(PHASE2_TERMINAL_PREFLIGHT_WITNESS)
         ):
             errors.append(f"{rel}: Phase 2 terminal preflight is not terminal")
 
@@ -529,7 +589,7 @@ def check(root: Path) -> list[str]:
     if protocol_phase2 is not None:
         for witness in (
             *PROTOCOL_PHASE2_LIVE_WITNESSES,
-            PHASE2_TERMINAL_DISSENT_PREFLIGHT_WITNESS,
+            PHASE2_TERMINAL_PREFLIGHT_WITNESS,
         ):
             if norm_ws(witness) not in norm_ws(protocol_phase2):
                 errors.append(f"{PROTOCOL}: Phase 2 live-grammar witness missing")
