@@ -11,10 +11,12 @@ from __future__ import annotations
 
 import argparse
 import json
+import re
 import sys
 from pathlib import Path
 
 from _skill_lint import heading_section, norm_ws, read_or_exit2
+from check_panel_synthesis import ReportError, validate_evidence_anchor
 
 REPO_ROOT = Path(__file__).resolve().parents[1]
 CONTRACTS = {
@@ -43,6 +45,27 @@ SYNTH = "academic-paper-reviewer/agents/editorial_synthesizer_agent.md"
 PANEL_CHECKER = "scripts/check_panel_synthesis.py"
 PHASE_CHECKER = "scripts/check_phase_conformance.py"
 TEMPLATE = "academic-paper-reviewer/templates/peer_review_report_template.md"
+SHIPPED_EXAMPLES = (
+    "academic-paper-reviewer/examples/subclaim_decomposition_example.md",
+    "academic-paper-reviewer/examples/hei_paper_review_example.md",
+    "academic-paper-reviewer/examples/interdisciplinary_review_example.md",
+)
+SHIPPED_EXAMPLE_ANCHOR_COUNTS = {
+    SHIPPED_EXAMPLES[0]: 10,
+    SHIPPED_EXAMPLES[1]: 36,
+    SHIPPED_EXAMPLES[2]: 36,
+}
+SHIPPED_EXAMPLE_ANCHOR_RE = re.compile(
+    r"`(?P<anchor>(?:text|table|figure|equation|dataset|absence): [^`\n]+)`",
+    re.IGNORECASE,
+)
+TEMPLATE_EXAMPLE_ANCHOR_COUNT = 3
+TEMPLATE_EXAMPLE_ANCHOR_TYPES = ("text", "table", "absence")
+TEMPLATE_EXAMPLE_ANCHOR_RE = re.compile(
+    r"^Evidence Anchor: "
+    r"(?P<anchor>(?:text|table|figure|equation|dataset|absence): \S.*)$",
+    re.IGNORECASE | re.MULTILINE,
+)
 SPRINT = "## v3.6.2 Sprint Contract Protocol"
 PHASE1 = "### Phase 1 — Paper-content-blind pre-commitment"
 PHASE2 = "### Phase 2 — Paper-visible review"
@@ -68,9 +91,105 @@ SCORING_FINDING_WITNESS = (
 )
 SCORING_FIELD_VARIANT_WITNESS = (
     "Finding fields may be unindented or Markdown-list-indented, and may be "
-    "separate lines or pipe-delimited on one line. A typed anchor value may "
-    "be bare or backtick-wrapped; these presentation variants do not weaken "
-    "the one-finding/one-Severity/one-anchor gate"
+    "separate lines or pipe-delimited on one line. The complete typed anchor "
+    "value, including its type and locator, may be bare, backtick-wrapped, or "
+    "square-bracketed; these presentation variants do not weaken the "
+    "one-finding/one-Severity/one-anchor gate"
+)
+ANCHOR_VALUE_GRAMMAR_WITNESS = (
+    "Every Evidence Anchor value begins with the literal `<type>: <locator>` "
+    "grammar. An opening backtick or `[` immediately before `<type>` starts an "
+    "outer wrapper and requires its matching closer; nothing may appear "
+    "between the type and its colon, so `` `text`: §3 `` and `` `text` — §3 `` "
+    "are both invalid. Wrapper-like characters inside a locator are content "
+    "and must be locally balanced — a bracketed locator such as "
+    "`equation: Eq. [3]` and a locator naming inline code such as "
+    "``text: §3 \"quote\" per `df``` are valid. A `text:` anchor includes only "
+    "balanced pairs of straight or curly double quotes, with every quoted "
+    "excerpt at most 25 words. An `absence:` anchor uses the exact grammar "
+    "`absence: <where> — expected <item>; checked <surfaces>`, including the "
+    "literal single space after the semicolon and non-empty content for every "
+    "placeholder. The reserved ` — expected ` and `; checked ` separator "
+    "sequences each occur exactly once"
+)
+ANCHOR_VALIDATOR_REGEX_WITNESS = (
+    r'r"^(?P<type>text|table|figure|equation|dataset|absence):\s*"' "\n"
+    r'        r"(?P<tail>\S.*)$"'
+)
+ANCHOR_SQUARE_BALANCE_WITNESS = '''def _balanced_square_brackets(text: str) -> bool:
+    """Return whether square brackets are ordered and balanced in locator text."""
+    depth = 0
+    for char in text:
+        if char == "[":
+            depth += 1
+        elif char == "]":
+            depth -= 1
+            if depth < 0:
+                return False
+    return depth == 0'''
+ANCHOR_QUOTE_SCANNER_WITNESS = '''def _quoted_excerpts(text: str) -> list[str] | None:
+    """Return every balanced straight/curly excerpt, including nested pairs."""
+    stack: list[tuple[str, int]] = []
+    excerpts: list[str] = []
+    for index, char in enumerate(text):
+        if char == "“":
+            stack.append(("curly", index + 1))
+        elif char == "”":
+            if not stack or stack[-1][0] != "curly":
+                return None
+            _, start = stack.pop()
+            excerpts.append(text[start:index])
+        elif char == '"':
+            if stack and stack[-1][0] == "straight":
+                _, start = stack.pop()
+                excerpts.append(text[start:index])
+            else:
+                stack.append(("straight", index + 1))
+    return None if stack else excerpts'''
+ANCHOR_QUOTE_USAGE_WITNESS = (
+    "quote_texts = _quoted_excerpts(tail)"
+)
+ANCHOR_QUOTE_LIMIT_WITNESS = (
+    "any(not text.strip() or len(text.split()) > 25\n"
+    "                   for text in quote_texts)"
+)
+ANCHOR_ABSENCE_PARSER_WITNESS = '''def _absence_parts(text: str) -> tuple[str, str, str] | None:
+    """Parse the two reserved absence separators without regex backtracking."""
+    expected_separator = " — expected "
+    checked_separator = "; checked "
+    if (
+        text.count(expected_separator) != 1
+        or text.count(checked_separator) != 1
+    ):
+        return None
+    where, found_expected, remainder = text.partition(expected_separator)
+    expected, found_checked, surfaces = remainder.partition(checked_separator)
+    if not found_expected or not found_checked:
+        return None
+    parts = (where, expected, surfaces)
+    return parts if all(part.strip() for part in parts) else None'''
+ANCHOR_ABSENCE_USAGE_WITNESS = "if _absence_parts(tail) is None:"
+ANCHOR_WRAPPER_WITNESSES = (
+    'if value.startswith("["):',
+    'if not value.endswith("]"):',
+    "square_inner = value[1:-1]\n",
+    "if square_inner != square_inner.strip():",
+    'if value.startswith("`"):',
+    'if not value.endswith("`"):',
+    "backtick_inner = value[1:-1]\n",
+    "if backtick_inner != backtick_inner.strip():",
+)
+ANCHOR_CONTENT_BALANCE_WITNESSES = (
+    "if not _balanced_square_brackets(tail) or tail.count(\"`\") % 2:",
+)
+TEMPLATE_ANCHOR_PLACEHOLDER_WITNESSES = (
+    "**Evidence Anchor**: [`<type>: <locator>`]\n"
+    "[Replace the complete backticked value above; never wrap `<type>` alone. "
+    "See § Evidence Anchor Types.]",
+    "**Evidence Anchor**: [`<type>: <locator>`]\n"
+    "[Replace the complete backticked value above; never wrap `<type>` alone. "
+    "Critical/Major findings require an adequate, applicable type (#574 A2); "
+    "see § Evidence Anchor Types.]",
 )
 DA_FINDING_WITNESS = (
     "emit exactly one `#### CRITICAL` section and exactly one `#### MAJOR` "
@@ -241,6 +360,8 @@ def check(root: Path) -> list[str]:
             errors.append(f"{rel}: Phase 2 per-finding grammar witness missing")
         if role != "da" and norm_ws(SCORING_FIELD_VARIANT_WITNESS) not in phase2_norm:
             errors.append(f"{rel}: Phase 2 finding-field variant witness missing")
+        if norm_ws(ANCHOR_VALUE_GRAMMAR_WITNESS) not in phase2_norm:
+            errors.append(f"{rel}: Phase 2 anchor-value grammar witness missing")
 
     da = _read(root, "academic-paper-reviewer/agents/devils_advocate_reviewer_agent.md")
     if "Score the paper — your job is to challenge, not score." in da:
@@ -249,6 +370,7 @@ def check(root: Path) -> list[str]:
         errors.append("DA role-scoped Phase Boundary clause missing")
 
     protocol = heading_section(_read(root, PROTOCOL), "## 9. Recognised expression vocabulary")
+    protocol_phase2 = heading_section(_read(root, PROTOCOL), "## 5. Phase 2 output lint")
     synth = heading_section(_read(root, SYNTH), SPRINT.replace("Protocol", "Synthesizer Protocol"))
     checker = _read(root, PANEL_CHECKER)
     phase_checker = _read(root, PHASE_CHECKER)
@@ -283,8 +405,82 @@ def check(root: Path) -> list[str]:
             errors.append(
                 f"{PANEL_CHECKER}: DA parser witness missing: {witness}"
             )
-    if norm_ws(SCORING_FIELD_VARIANT_WITNESS) not in norm_ws(_read(root, TEMPLATE)):
+    if ANCHOR_VALIDATOR_REGEX_WITNESS not in checker:
+        errors.append(f"{PANEL_CHECKER}: anchor-validator regex witness missing")
+    if ANCHOR_SQUARE_BALANCE_WITNESS not in checker:
+        errors.append(f"{PANEL_CHECKER}: square-balance helper witness missing")
+    if ANCHOR_QUOTE_SCANNER_WITNESS not in checker:
+        errors.append(f"{PANEL_CHECKER}: anchor-quote scanner witness missing")
+    if ANCHOR_QUOTE_USAGE_WITNESS not in checker:
+        errors.append(f"{PANEL_CHECKER}: anchor-quote scanner usage missing")
+    if ANCHOR_QUOTE_LIMIT_WITNESS not in checker:
+        errors.append(f"{PANEL_CHECKER}: anchor-quote pair limit missing")
+    if ANCHOR_ABSENCE_PARSER_WITNESS not in checker:
+        errors.append(f"{PANEL_CHECKER}: anchor-absence parser witness missing")
+    if ANCHOR_ABSENCE_USAGE_WITNESS not in checker:
+        errors.append(f"{PANEL_CHECKER}: anchor-absence parser usage missing")
+    for witness in ANCHOR_WRAPPER_WITNESSES:
+        if witness not in checker:
+            errors.append(
+                f"{PANEL_CHECKER}: anchor-wrapper witness missing: {witness}"
+            )
+    for witness in ANCHOR_CONTENT_BALANCE_WITNESSES:
+        if witness not in checker:
+            errors.append(
+                f"{PANEL_CHECKER}: anchor-content-balance witness missing: {witness}"
+            )
+    if (
+        protocol_phase2 is None
+        or norm_ws(ANCHOR_VALUE_GRAMMAR_WITNESS) not in norm_ws(protocol_phase2)
+    ):
+        errors.append(f"{PROTOCOL}: Phase 2 anchor-value grammar witness missing")
+    template = _read(root, TEMPLATE)
+    if norm_ws(SCORING_FIELD_VARIANT_WITNESS) not in norm_ws(template):
         errors.append(f"{TEMPLATE}: finding-field variant witness missing")
+    if norm_ws(ANCHOR_VALUE_GRAMMAR_WITNESS) not in norm_ws(template):
+        errors.append(f"{TEMPLATE}: anchor-value grammar witness missing")
+    for witness in TEMPLATE_ANCHOR_PLACEHOLDER_WITNESSES:
+        if witness not in template:
+            errors.append(f"{TEMPLATE}: anchor placeholder witness missing")
+    template_anchors = [
+        match.group("anchor")
+        for match in TEMPLATE_EXAMPLE_ANCHOR_RE.finditer(template)
+    ]
+    if len(template_anchors) != TEMPLATE_EXAMPLE_ANCHOR_COUNT:
+        errors.append(
+            f"{TEMPLATE}: expected {TEMPLATE_EXAMPLE_ANCHOR_COUNT} canonical "
+            f"anchor examples, found {len(template_anchors)}"
+        )
+    template_anchor_types = tuple(
+        anchor.partition(":")[0].lower() for anchor in template_anchors
+    )
+    if template_anchor_types != TEMPLATE_EXAMPLE_ANCHOR_TYPES:
+        errors.append(
+            f"{TEMPLATE}: expected ordered canonical anchor types "
+            f"{TEMPLATE_EXAMPLE_ANCHOR_TYPES}, found {template_anchor_types}"
+        )
+    for index, anchor in enumerate(template_anchors, 1):
+        try:
+            validate_evidence_anchor(anchor, f"{TEMPLATE}:example-{index}")
+        except ReportError as exc:
+            errors.append(str(exc))
+    for rel in SHIPPED_EXAMPLES:
+        example = _read(root, rel)
+        anchors = [
+            match.group("anchor")
+            for match in SHIPPED_EXAMPLE_ANCHOR_RE.finditer(example)
+        ]
+        expected_count = SHIPPED_EXAMPLE_ANCHOR_COUNTS[rel]
+        if len(anchors) != expected_count:
+            errors.append(
+                f"{rel}: expected {expected_count} shipped typed anchors, "
+                f"found {len(anchors)}"
+            )
+        for index, anchor in enumerate(anchors, 1):
+            try:
+                validate_evidence_anchor(anchor, f"{rel}:anchor-{index}")
+            except ReportError as exc:
+                errors.append(str(exc))
     return errors
 
 

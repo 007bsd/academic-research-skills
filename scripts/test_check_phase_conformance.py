@@ -452,6 +452,21 @@ def test_nonmandatory_block_class_fails_phase_checker(tmp_path):
         "twentyone twentytwo twentythree twentyfour twentyfive twentysix\"",
         "### W1: empty absence\n**Severity**: Critical\n"
         "**Evidence Anchor**: absence:",
+        "### W1: incomplete absence\n**Severity**: Critical\n"
+        "**Evidence Anchor**: absence: x",
+        "### W1: missing expected item\n**Severity**: Critical\n"
+        "**Evidence Anchor**: absence: Methods — expected ; checked appendix",
+        "### W1: missing checked surfaces\n**Severity**: Critical\n"
+        "**Evidence Anchor**: absence: Methods — expected ethics statement; checked",
+        "### W1: missing literal separator space\n**Severity**: Critical\n"
+        "**Evidence Anchor**: absence: Methods — expected ethics statement;checked appendix",
+        "### W1: doubled separator space\n**Severity**: Critical\n"
+        "**Evidence Anchor**: absence: Methods — expected ethics statement;  checked appendix",
+        "### W1: repeated separators\n**Severity**: Critical\n"
+        "**Evidence Anchor**: absence: Methods — expected ; checked appendix "
+        "— expected ethics statement; checked supplement",
+        "### W1: reversed separators\n**Severity**: Critical\n"
+        "**Evidence Anchor**: absence: Methods; checked appendix — expected ethics statement",
     ],
 )
 def test_critical_major_anchor_failures(body):
@@ -466,7 +481,8 @@ def test_critical_major_anchor_failures(body):
         '### W1: quoted defect\n**Severity**: Critical\n'
         '**Evidence Anchor**: text: "short exact quote" p. 2',
         "### W1: missing surfaces\n**Severity**: Major\n"
-        "**Evidence Anchor**: absence: checked Methods, appendix, and supplement",
+        "**Evidence Anchor**: absence: Methods — expected an ethics statement; "
+        "checked Methods, appendix, and supplement",
     ],
 )
 def test_compliant_critical_major_anchors_pass(body):
@@ -495,7 +511,8 @@ def test_two_independently_anchored_findings_pass():
         '**Evidence Anchor**: text: "first quote" p. 1\n'
         "### W2: second\n"
         "**Severity**: Major\n"
-        "**Evidence Anchor**: absence: checked Methods and appendix"
+        "**Evidence Anchor**: absence: Methods — expected an ethics statement; "
+        "checked Methods and appendix"
     )
     report, _ = parse_report("eic", body=body)
     phase.check_scoring_seat_anchors(report)
@@ -576,21 +593,104 @@ def test_indented_bullet_fields_still_enforce_anchor_gate():
         phase.check_scoring_seat_anchors(report)
 
 
-def test_backticked_template_anchor_is_normalised_and_accepted():
+@pytest.mark.parametrize(
+    "anchor",
+    (
+        '`text: §5 "short exact quote"`',
+        '[`text: §5 "short exact quote"`]',
+        '[text: §5 "short exact quote"]',
+        "text: §5 “short exact quote”",
+        "equation: Eq. [3]",
+        "[equation: Eq. [3]]",
+        'text: §5 "short exact quote" per `df`',
+        '`text: §5 "short exact quote" per `df``',
+        "text: §2 “the term “quality culture” is undefined”",
+        'text: §2 "he said “quality culture” often"',
+    ),
+)
+def test_whole_value_wrapped_template_anchor_is_normalised_and_accepted(anchor):
     body = (
         "### W1: template-shaped finding\n"
         "**Severity**: Critical\n"
-        "**Evidence Anchor**: `text: §5 \"short exact quote\"`"
+        f"**Evidence Anchor**: {anchor}"
     )
     report, _ = parse_report("eic", body=body)
     phase.check_scoring_seat_anchors(report)
+
+
+@pytest.mark.parametrize(
+    "anchor",
+    (
+        '[`text`: §5 "short exact quote"]',
+        '`text` — §5 "short exact quote"',
+    ),
+)
+def test_type_only_wrapping_anchor_is_rejected(anchor):
+    body = (
+        "### W1: malformed type wrapping\n"
+        "**Severity**: Critical\n"
+        f"**Evidence Anchor**: {anchor}"
+    )
+    report, _ = parse_report("eic", body=body)
+    with pytest.raises(phase.ConformanceError, match="ANCHOR-INVALID"):
+        phase.check_scoring_seat_anchors(report)
+
+
+@pytest.mark.parametrize(
+    "anchor",
+    (
+        '`text: §5 "short exact quote"',
+        'text: §5 "short exact quote"`',
+        '[text: §5 "short exact quote"',
+        'text: §5 "short exact quote"]',
+        'text: §5 "short exact quote"`]',
+        '[text: §5 "short exact quote"] trailing]',
+        '[ text: §5 "short exact quote" ]',
+        '[[text: §5 "short exact quote"]]',
+        '``text: §5 "short exact quote"``',
+        '` text: §5 "short exact quote" `',
+        '[`text: §5 "short exact quote"]',
+        '[text: §5 "short exact quote"`]',
+        "equation: Eq. ]3[",
+    ),
+)
+def test_unpaired_or_repeated_whole_value_wrappers_are_rejected(anchor):
+    body = (
+        "### W1: malformed whole-value wrapper\n"
+        "**Severity**: Critical\n"
+        f"**Evidence Anchor**: {anchor}"
+    )
+    report, _ = parse_report("eic", body=body)
+    with pytest.raises(phase.ConformanceError, match="ANCHOR-INVALID"):
+        phase.check_scoring_seat_anchors(report)
+
+
+@pytest.mark.parametrize(
+    "anchor",
+    (
+        'text: §5 "short exact quote”',
+        'text: §5 “short exact quote"',
+        'text: §5 "outer “inner”',
+        'text: §5 “outer "inner”"',
+    ),
+)
+def test_hybrid_double_quote_pairs_are_rejected(anchor):
+    body = (
+        "### W1: mismatched quote pair\n"
+        "**Severity**: Critical\n"
+        f"**Evidence Anchor**: {anchor}"
+    )
+    report, _ = parse_report("eic", body=body)
+    with pytest.raises(phase.ConformanceError, match="ANCHOR-INVALID"):
+        phase.check_scoring_seat_anchors(report)
 
 
 def test_combined_template_fields_are_parsed():
     body = (
         "### W1: combined fields\n"
         "  - **Severity**: Major | **Evidence Anchor**: "
-        "`absence: checked Methods and appendix` | "
+        "`absence: Methods — expected an ethics statement; "
+        "checked Methods and appendix` | "
         "**Confidence**: 4 — core expertise"
     )
     report, _ = parse_report("eic", body=body)

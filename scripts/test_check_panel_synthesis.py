@@ -16,6 +16,78 @@ FULL = json.loads(FULL_PATH.read_text(encoding="utf-8"))
 ROLES = ("eic", "methodology", "domain", "perspective", "da")
 
 
+@pytest.mark.parametrize(
+    "anchor",
+    (
+        "absence: x",
+        "absence: Methods — expected ethics;checked appendix",
+        "absence: Methods — expected ethics;  checked appendix",
+        "absence: Methods — expected ; checked appendix — expected ethics; checked supplement",
+        "absence: Methods; checked appendix — expected ethics",
+        "equation: Eq. ]3[",
+        "absence: Methods — expected ethics; checked appendix]",
+        "[absence: Methods — expected ethics; checked appendix",
+        '[ text: §5 "short exact quote" ]',
+        '` text: §5 "short exact quote" `',
+        '`text: §5 "short exact quote"',
+        'text: §5 "short exact quote"`',
+        'text: §5 "short exact quote"]',
+        'text: §5 "short exact quote"`]',
+        '[text: §5 "short exact quote"] trailing]',
+        '[[text: §5 "short exact quote"]]',
+        '``text: §5 "short exact quote"``',
+        'text: §5 "short exact quote”',
+        'text: §5 “short exact quote"',
+        'text: §5 "outer “inner”',
+        'text: §5 “outer "inner”"',
+        "text: §5 “outer “” tail”",
+    ),
+)
+def test_shared_anchor_validator_rejects_incomplete_or_unpaired_shapes(anchor):
+    with pytest.raises(cps.ReportError, match="ANCHOR-INVALID"):
+        cps.validate_evidence_anchor(anchor, "probe")
+
+
+@pytest.mark.parametrize(
+    "anchor",
+    (
+        "absence: Methods — expected an ethics statement; checked Methods, appendix",
+        '`text: §5 "short exact quote"`',
+        "text: §5 “short exact quote”",
+        "equation: Eq. [3]",
+        "table: Table 2 [Panel B]",
+        "[equation: Eq. [3]]",
+        'text: §4 "short quote" [emphasis added]',
+        'text: §3 "short quote" per `df`',
+        '`text: §3 "short quote" per `df``',
+        "text: §2 “the term “quality culture” is undefined”",
+        'text: §2 "he said “quality culture” often"',
+    ),
+)
+def test_shared_anchor_validator_accepts_complete_paired_shapes(anchor):
+    cps.validate_evidence_anchor(anchor, "inverse")
+
+
+def test_shared_anchor_validator_checks_nested_quote_word_limit_per_pair():
+    words_25 = " ".join(["word"] * 25)
+    words_26 = " ".join(["word"] * 26)
+    cps.validate_evidence_anchor(
+        f"text: §2 ““{words_25}””",
+        "nested-25-word-boundary",
+    )
+    with pytest.raises(cps.ReportError, match="at most 25 words"):
+        cps.validate_evidence_anchor(
+            f"text: §2 ““{words_26}””",
+            "nested-26-word-boundary",
+        )
+    outer_words = " ".join(["outer"] * 24)
+    with pytest.raises(cps.ReportError, match="at most 25 words"):
+        cps.validate_evidence_anchor(
+            f"text: §2 “{outer_words} “inner” tail”",
+            "nested-differential-outer-26-inner-1",
+        )
+
+
 def state(value: str) -> cps.DimensionScore:
     if value == "fatal":
         return cps.DimensionScore("block", "fatal", "fatal trigger")
@@ -845,6 +917,38 @@ def test_da_canonical_rows_allow_escaped_pipes():
     critical, major = cps.parse_da_tables(text, "da.md")
     assert list(critical) == ["C1"]
     assert major == ['text: "quoted evidence" p. 1']
+
+
+def test_da_repeated_absence_separators_fail_in_synthesis_path():
+    malformed = (
+        "absence: Methods — expected ; checked appendix "
+        "— expected ethics; checked supplement"
+    )
+    text = report_text("da", da_ids=("C1",)).replace(
+        'text: "quoted evidence" p. 1',
+        malformed,
+        1,
+    )
+    with pytest.raises(cps.ReportError, match="ANCHOR-INVALID"):
+        cps.parse_da_tables(text, "da.md")
+
+
+@pytest.mark.parametrize(
+    "malformed",
+    (
+        "absence: Methods; checked appendix — expected ethics",
+        '[ text: §5 "short exact quote" ]',
+        "equation: Eq. ]3[",
+    ),
+)
+def test_da_misordered_absence_or_padded_wrapper_fails_synthesis(malformed):
+    text = report_text("da", da_ids=("C1",)).replace(
+        'text: "quoted evidence" p. 1',
+        malformed,
+        1,
+    )
+    with pytest.raises(cps.ReportError, match="ANCHOR-INVALID"):
+        cps.parse_da_tables(text, "da.md")
 
 
 @pytest.mark.parametrize(

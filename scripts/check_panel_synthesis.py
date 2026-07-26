@@ -274,12 +274,82 @@ def _rendered_header_cell(cell: str) -> str:
     return re.sub(r"\s+", " ", rendered).strip().casefold()
 
 
+def _balanced_square_brackets(text: str) -> bool:
+    """Return whether square brackets are ordered and balanced in locator text."""
+    depth = 0
+    for char in text:
+        if char == "[":
+            depth += 1
+        elif char == "]":
+            depth -= 1
+            if depth < 0:
+                return False
+    return depth == 0
+
+
+def _quoted_excerpts(text: str) -> list[str] | None:
+    """Return every balanced straight/curly excerpt, including nested pairs."""
+    stack: list[tuple[str, int]] = []
+    excerpts: list[str] = []
+    for index, char in enumerate(text):
+        if char == "“":
+            stack.append(("curly", index + 1))
+        elif char == "”":
+            if not stack or stack[-1][0] != "curly":
+                return None
+            _, start = stack.pop()
+            excerpts.append(text[start:index])
+        elif char == '"':
+            if stack and stack[-1][0] == "straight":
+                _, start = stack.pop()
+                excerpts.append(text[start:index])
+            else:
+                stack.append(("straight", index + 1))
+    return None if stack else excerpts
+
+
+def _absence_parts(text: str) -> tuple[str, str, str] | None:
+    """Parse the two reserved absence separators without regex backtracking."""
+    expected_separator = " — expected "
+    checked_separator = "; checked "
+    if (
+        text.count(expected_separator) != 1
+        or text.count(checked_separator) != 1
+    ):
+        return None
+    where, found_expected, remainder = text.partition(expected_separator)
+    expected, found_checked, surfaces = remainder.partition(checked_separator)
+    if not found_expected or not found_checked:
+        return None
+    parts = (where, expected, surfaces)
+    return parts if all(part.strip() for part in parts) else None
+
+
 def validate_evidence_anchor(anchor: str, context: str) -> None:
     """Validate the shared finding-anchor grammar for either checker."""
     value = anchor.strip()
-    if value.startswith("[") and value.endswith("]"):
-        value = value[1:-1].strip()
-    value = value.strip("`").strip()
+    if value.startswith("["):
+        if not value.endswith("]"):
+            raise ReportError(
+                f"[ANCHOR-INVALID: {context}: unpaired square wrapper]"
+            )
+        square_inner = value[1:-1]
+        if square_inner != square_inner.strip():
+            raise ReportError(
+                f"[ANCHOR-INVALID: {context}: padded square wrapper]"
+            )
+        value = square_inner
+    if value.startswith("`"):
+        if not value.endswith("`"):
+            raise ReportError(
+                f"[ANCHOR-INVALID: {context}: unpaired backtick wrapper]"
+            )
+        backtick_inner = value[1:-1]
+        if backtick_inner != backtick_inner.strip():
+            raise ReportError(
+                f"[ANCHOR-INVALID: {context}: padded backtick wrapper]"
+            )
+        value = backtick_inner
     match = re.match(
         r"^(?P<type>text|table|figure|equation|dataset|absence):\s*"
         r"(?P<tail>\S.*)$",
@@ -289,12 +359,27 @@ def validate_evidence_anchor(anchor: str, context: str) -> None:
     if not match:
         tag = "ANCHOR-MISSING" if not value else "ANCHOR-INVALID"
         raise ReportError(f"[{tag}: {context}: expected typed anchor]")
+    tail = match.group("tail")
+    if not _balanced_square_brackets(tail) or tail.count("`") % 2:
+        raise ReportError(
+            f"[ANCHOR-INVALID: {context}: locator delimiters must be balanced]"
+        )
     if match.group("type").casefold() == "text":
-        quote = re.search(r'["“](?P<quote>[^"”]+)["”]', match.group("tail"))
-        if not quote or len(quote.group("quote").split()) > 25:
+        quote_texts = _quoted_excerpts(tail)
+        if (
+            not quote_texts
+            or any(not text.strip() or len(text.split()) > 25
+                   for text in quote_texts)
+        ):
             raise ReportError(
-                f"[ANCHOR-INVALID: {context}: text anchor needs a quoted "
-                "excerpt of at most 25 words]"
+                f"[ANCHOR-INVALID: {context}: text anchor needs balanced "
+                "quoted excerpts of at most 25 words]"
+            )
+    elif match.group("type").casefold() == "absence":
+        if _absence_parts(tail) is None:
+            raise ReportError(
+                f"[ANCHOR-INVALID: {context}: absence anchor needs "
+                "<where> — expected <item>; checked <surfaces>]"
             )
 
 

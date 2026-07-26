@@ -10,7 +10,7 @@ REPO = Path(__file__).resolve().parents[1]
 MIRROR_FILES = tuple(lint.CONTRACTS) + tuple(lint.AGENTS) + (
     lint.PROTOCOL, lint.SYNTH, lint.PANEL_CHECKER, lint.PHASE_CHECKER,
     lint.TEMPLATE,
-)
+) + tuple(lint.SHIPPED_EXAMPLES)
 
 
 def mirror(tmp_path: Path) -> Path:
@@ -420,10 +420,235 @@ def test_template_field_variant_witness_mutation_fails(tmp_path):
     mutate(
         root,
         lint.TEMPLATE,
-        "may be bare or backtick-wrapped",
-        "must always be bare",
+        "including its type and locator, may be bare, backtick-wrapped, or square-bracketed",
+        "including only its type, may be bare, backtick-wrapped, or square-bracketed",
     )
     assert lint.check(root)
+
+
+def test_delivered_anchor_value_grammar_mutations_fail(tmp_path):
+    for rel in lint.AGENTS:
+        root = mirror(tmp_path / Path(rel).stem)
+        mutate(
+            root,
+            rel,
+            "nothing may appear between the type and its colon",
+            "content may appear between the type and its colon",
+        )
+        assert lint.check(root)
+
+
+def test_template_anchor_value_grammar_mutation_fails(tmp_path):
+    root = mirror(tmp_path)
+    mutate(
+        root,
+        lint.TEMPLATE,
+        "Every Evidence Anchor value begins with the literal `<type>: <locator>` grammar",
+        "Every Evidence Anchor value should usually include a type and locator",
+    )
+    assert lint.check(root)
+
+
+def test_protocol_anchor_value_grammar_mutation_fails(tmp_path):
+    root = mirror(tmp_path)
+    mutate(
+        root,
+        lint.PROTOCOL,
+        "An `absence:` anchor uses the exact grammar",
+        "An `absence:` anchor may use an approximate grammar",
+    )
+    assert lint.check(root)
+
+
+def test_anchor_validator_colon_regex_mutation_fails(tmp_path):
+    root = mirror(tmp_path)
+    mutate(
+        root,
+        lint.PANEL_CHECKER,
+        r'r"^(?P<type>text|table|figure|equation|dataset|absence):\s*"',
+        r'r"^(?P<type>text|table|figure|equation|dataset|absence)(?::|-)\s*"',
+    )
+    assert lint.check(root)
+
+
+def test_anchor_square_balance_helper_mutation_fails(tmp_path):
+    root = mirror(tmp_path)
+    mutate(
+        root,
+        lint.PANEL_CHECKER,
+        lint.ANCHOR_SQUARE_BALANCE_WITNESS,
+        lint.ANCHOR_SQUARE_BALANCE_WITNESS.replace(
+            "if depth < 0:",
+            "if False:",
+            1,
+        ),
+    )
+    assert lint.check(root)
+
+
+def test_anchor_validator_quote_scanner_mutation_fails(tmp_path):
+    root = mirror(tmp_path)
+    mutate(
+        root,
+        lint.PANEL_CHECKER,
+        lint.ANCHOR_QUOTE_SCANNER_WITNESS,
+        lint.ANCHOR_QUOTE_SCANNER_WITNESS.replace(
+            'if not stack or stack[-1][0] != "curly":',
+            'if not stack:',
+            1,
+        ),
+    )
+    assert lint.check(root)
+
+
+def test_anchor_validator_quote_scanner_usage_mutation_fails(tmp_path):
+    root = mirror(tmp_path)
+    mutate(
+        root,
+        lint.PANEL_CHECKER,
+        lint.ANCHOR_QUOTE_USAGE_WITNESS,
+        "quote_texts = []",
+    )
+    assert lint.check(root)
+
+
+def test_anchor_validator_quote_pair_limit_mutation_fails(tmp_path):
+    root = mirror(tmp_path)
+    mutate(
+        root,
+        lint.PANEL_CHECKER,
+        lint.ANCHOR_QUOTE_LIMIT_WITNESS,
+        (
+            "not quote_texts[0].strip() "
+            "or len(quote_texts[0].split()) > 25"
+        ),
+    )
+    assert lint.check(root)
+
+
+def test_anchor_validator_absence_parser_mutation_fails(tmp_path):
+    root = mirror(tmp_path)
+    mutate(
+        root,
+        lint.PANEL_CHECKER,
+        lint.ANCHOR_ABSENCE_PARSER_WITNESS,
+        lint.ANCHOR_ABSENCE_PARSER_WITNESS.replace(
+            "text.count(expected_separator) != 1",
+            "text.count(expected_separator) >= 1",
+            1,
+        ),
+    )
+    assert lint.check(root)
+
+
+def test_anchor_validator_absence_parser_usage_mutation_fails(tmp_path):
+    root = mirror(tmp_path)
+    mutate(
+        root,
+        lint.PANEL_CHECKER,
+        lint.ANCHOR_ABSENCE_USAGE_WITNESS,
+        "if False:",
+    )
+    assert lint.check(root)
+
+
+def test_shipped_example_absence_separator_mutation_fails(tmp_path):
+    for index, rel in enumerate(lint.SHIPPED_EXAMPLES):
+        root = mirror(tmp_path / str(index))
+        mutate(root, rel, "; checked", ";checked")
+        assert lint.check(root)
+
+
+def test_anchor_validator_wrapper_mutations_fail(tmp_path):
+    replacements = (
+        (
+            'if value.startswith("["):',
+            'if False and value.startswith("["):',
+        ),
+        (
+            'if not value.endswith("]"):',
+            'if False and not value.endswith("]"):',
+        ),
+        (
+            "square_inner = value[1:-1]",
+            "square_inner = value[1:-1].strip()",
+        ),
+        (
+            "if square_inner != square_inner.strip():",
+            "if False:",
+        ),
+        (
+            'if value.startswith("`"):',
+            'if False and value.startswith("`"):',
+        ),
+        (
+            'if not value.endswith("`"):',
+            'if False and not value.endswith("`"):',
+        ),
+        (
+            "backtick_inner = value[1:-1]",
+            "backtick_inner = value[1:-1].strip()",
+        ),
+        (
+            "if backtick_inner != backtick_inner.strip():",
+            "if False:",
+        ),
+    )
+    for index, (old, new) in enumerate(replacements):
+        root = mirror(tmp_path / str(index))
+        mutate(root, lint.PANEL_CHECKER, old, new)
+        assert lint.check(root)
+
+
+def test_anchor_validator_content_balance_mutations_fail(tmp_path):
+    replacements = (
+        (
+            "if not _balanced_square_brackets(tail) or tail.count(\"`\") % 2:",
+            "if False:",
+        ),
+    )
+    for index, (old, new) in enumerate(replacements):
+        root = mirror(tmp_path / str(index))
+        mutate(root, lint.PANEL_CHECKER, old, new)
+        assert lint.check(root)
+
+
+def test_template_anchor_placeholder_tail_mutations_fail(tmp_path):
+    for index, witness in enumerate(lint.TEMPLATE_ANCHOR_PLACEHOLDER_WITNESSES):
+        root = mirror(tmp_path / str(index))
+        mutate(
+            root,
+            lint.TEMPLATE,
+            witness,
+            witness.replace("]\n[Replace", "] — Replace", 1),
+        )
+        assert lint.check(root)
+
+
+def test_template_canonical_anchor_example_mutation_fails(tmp_path):
+    root = mirror(tmp_path)
+    mutate(
+        root,
+        lint.TEMPLATE,
+        (
+            "Evidence Anchor: absence: Methods — expected a consent/ethics "
+            "statement; checked §3, §6, appendix"
+        ),
+        "Evidence Anchor: absence: checked §3, §6, appendix",
+    )
+    assert lint.check(root)
+
+
+def test_template_canonical_anchor_type_substitutions_fail(tmp_path):
+    substitutions = (
+        ("Evidence Anchor: text:", "Evidence Anchor: figure:"),
+        ("Evidence Anchor: table:", "Evidence Anchor: dataset:"),
+        ("Evidence Anchor: absence:", "Evidence Anchor: equation:"),
+    )
+    for index, (old, new) in enumerate(substitutions):
+        root = mirror(tmp_path / str(index))
+        mutate(root, lint.TEMPLATE, old, new)
+        assert lint.check(root)
 
 
 def test_da_old_no_scoring_clause_fails(tmp_path):
