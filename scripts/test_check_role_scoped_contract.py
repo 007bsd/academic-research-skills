@@ -132,8 +132,8 @@ def test_severity_declaration_sentinel_mutation_fails(tmp_path):
     mutate(
         root,
         lint.PHASE_CHECKER,
-        r'_SEVERITY_DECL_RE = re.compile(r"\*\*Severity(?:\*\*)?\s*:")',
-        r'_SEVERITY_DECL_RE = re.compile(r"\*\*Severity\*\*:")',
+        r'    r"\*\*Severity(?:\*\*)?\s*:",',
+        r'    r"\*\*Severity\*\*:",',
     )
     assert lint.check(root)
 
@@ -143,8 +143,8 @@ def test_anchor_declaration_sentinel_mutation_fails(tmp_path):
     mutate(
         root,
         lint.PHASE_CHECKER,
-        r'_ANCHOR_DECL_RE = re.compile(r"\*\*Evidence Anchor(?:\*\*)?\s*:")',
-        r'_ANCHOR_DECL_RE = re.compile(r"\*\*Evidence Anchor\*\*:")',
+        r'    r"\*\*Evidence Anchor(?:\*\*)?\s*:",',
+        r'    r"\*\*Evidence Anchor\*\*:",',
     )
     assert lint.check(root)
 
@@ -180,6 +180,228 @@ def test_da_standalone_severity_witness_mutation_fails(tmp_path):
         "_DA_SEVERITY_DECL_RE.match(line)",
     )
     assert lint.check(root)
+
+
+def test_da_severity_regex_body_mutation_fails(tmp_path):
+    root = mirror(tmp_path)
+    mutate(
+        root,
+        lint.PANEL_CHECKER,
+        r'r"\*\*Severity(?:\*\*)?\s*:",',
+        r'r"^\*\*Severity(?:\*\*)?\s*:",',
+    )
+    assert lint.check(root)
+
+
+def test_da_severity_regex_ignorecase_mutation_fails(tmp_path):
+    root = mirror(tmp_path)
+    mutate(
+        root,
+        lint.PANEL_CHECKER,
+        r'    r"\*\*Severity(?:\*\*)?\s*:",' "\n"
+        "    re.IGNORECASE,\n"
+        ")",
+        r'    r"\*\*Severity(?:\*\*)?\s*:",' "\n"
+        ")",
+    )
+    assert lint.check(root)
+
+
+def test_da_global_table_scan_witness_mutation_fails(tmp_path):
+    root = mirror(tmp_path)
+    mutate(
+        root,
+        lint.PANEL_CHECKER,
+        "for candidate in lines:",
+        "for candidate in review_lines:",
+    )
+    assert lint.check(root)
+
+
+def test_da_header_whitespace_normalization_mutation_fails(tmp_path):
+    root = mirror(tmp_path)
+    mutate(
+        root,
+        lint.PANEL_CHECKER,
+        'return re.sub(r"\\s+", " ", rendered).strip().casefold()',
+        "return rendered.casefold()",
+    )
+    assert lint.check(root)
+
+
+def test_da_header_inline_markup_normalization_mutation_fails(tmp_path):
+    root = mirror(tmp_path)
+    mutate(
+        root,
+        lint.PANEL_CHECKER,
+        'rendered = re.sub(r"[*_~`]+", "", rendered)',
+        "rendered = rendered",
+    )
+    assert lint.check(root)
+
+
+def test_da_header_commonmark_reduction_mutations_fail(tmp_path):
+    mutations = (
+        (
+            r'rendered = re.sub(r"\\([^\w\s])", r"\1", cell)',
+            "rendered = cell",
+        ),
+        (
+            r'r"!?\[([^\]]*)\](?:\([^)]+\)|\[[^\]]*\])", r"\1", rendered',
+            r'r"never-match", r"\1", rendered',
+        ),
+        ("parser.feed(rendered)", 'parser.feed("")'),
+    )
+    for index, (old, new) in enumerate(mutations):
+        root = mirror(tmp_path / str(index))
+        mutate(root, lint.PANEL_CHECKER, old, new)
+        assert lint.check(root)
+
+
+def test_da_issue_payload_sentinel_mutations_fail(tmp_path):
+    mutations = (
+        (
+            r'_DA_ISSUE_ID_RE = re.compile(r"^[CM][1-9]\d*$", re.IGNORECASE)',
+            r'_DA_ISSUE_ID_RE = re.compile(r"^never$", re.IGNORECASE)',
+        ),
+        (
+            r'r"^(?:text|table|figure|equation|dataset|absence)\s*:",',
+            r'r"^never-match:",',
+        ),
+    )
+    for index, (old, new) in enumerate(mutations):
+        root = mirror(tmp_path / str(index))
+        mutate(root, lint.PANEL_CHECKER, old, new)
+        assert lint.check(root)
+
+
+def test_da_issue_payload_normalized_iterator_mutation_fails(tmp_path):
+    root = mirror(tmp_path)
+    mutate(
+        root,
+        lint.PANEL_CHECKER,
+        "issue_payload = any(\n"
+        "            _DA_ISSUE_ID_RE.fullmatch(cell)\n"
+        "            or _DA_TYPED_ANCHOR_RE.search(cell)\n"
+        "            for cell in cells\n"
+        "        )",
+        "issue_payload = any(\n"
+        "            _DA_ISSUE_ID_RE.fullmatch(cell)\n"
+        "            or _DA_TYPED_ANCHOR_RE.search(cell)\n"
+        "            for cell in raw_cells\n"
+        "        )",
+    )
+    assert lint.check(root)
+
+
+def test_da_gfm_escaped_pipe_splitter_mutation_fails(tmp_path):
+    root = mirror(tmp_path)
+    mutate(
+        root,
+        lint.PANEL_CHECKER,
+        "if backslashes % 2 == 0:",
+        "if True:",
+    )
+    assert lint.check(root)
+
+
+def test_da_canonical_splitter_callsite_mutation_fails(tmp_path):
+    root = mirror(tmp_path)
+    mutate(
+        root,
+        lint.PANEL_CHECKER,
+        "return _split_gfm_cells(stripped[1:-1])",
+        'return [cell.strip() for cell in stripped[1:-1].split("|")]',
+    )
+    assert lint.check(root)
+
+
+def test_da_unicode_format_normalization_mutations_fail(tmp_path):
+    mutations = (
+        (
+            'rendered = unicodedata.normalize("NFKC", rendered)',
+            "rendered = rendered",
+        ),
+        (
+            "and not _is_default_ignorable(char)",
+            "and True",
+        ),
+    )
+    for index, (old, new) in enumerate(mutations):
+        root = mirror(tmp_path / str(index))
+        mutate(root, lint.PANEL_CHECKER, old, new)
+        assert lint.check(root)
+
+
+def test_da_default_ignorable_range_table_mutation_fails(tmp_path):
+    root = mirror(tmp_path)
+    mutate(
+        root,
+        lint.PANEL_CHECKER,
+        "(0x202A, 0x202E)",
+        "(0x202A, 0x202D)",
+    )
+    assert lint.check(root)
+
+
+def test_da_nfkc_conditional_bypass_mutation_fails(tmp_path):
+    root = mirror(tmp_path)
+    mutate(
+        root,
+        lint.PANEL_CHECKER,
+        'rendered = unicodedata.normalize("NFKC", rendered)',
+        'rendered = unicodedata.normalize("NFKC", rendered) '
+        "if False else rendered",
+    )
+    assert lint.check(root)
+
+
+def test_da_raw_html_table_witness_mutation_fails(tmp_path):
+    root = mirror(tmp_path)
+    mutate(
+        root,
+        lint.PANEL_CHECKER,
+        "_RAW_HTML_TABLE_RE.search(candidate)",
+        "False",
+    )
+    assert lint.check(root)
+
+
+def test_da_raw_html_pattern_body_mutation_fails(tmp_path):
+    root = mirror(tmp_path)
+    mutate(
+        root,
+        lint.PANEL_CHECKER,
+        r"(?:table|thead|tbody|tr|th|td)",
+        r"(?:table)",
+    )
+    assert lint.check(root)
+
+
+def test_da_extra_band_table_witness_mutation_fails(tmp_path):
+    root = mirror(tmp_path)
+    mutate(
+        root,
+        lint.PANEL_CHECKER,
+        'if "#" in cells or "evidence anchor" in cells or issue_payload:',
+        'if "#" in cells and "evidence anchor" in cells and issue_payload:',
+    )
+    assert lint.check(root)
+
+
+def test_phase_finding_declaration_ignorecase_mutations_fail(tmp_path):
+    for name in ("Severity", "Evidence Anchor"):
+        current = mirror(tmp_path / name.replace(" ", "-"))
+        mutate(
+            current,
+            lint.PHASE_CHECKER,
+            rf'    r"\*\*{name}(?:\*\*)?\s*:",' "\n"
+            "    re.IGNORECASE,\n"
+            ")",
+            rf'    r"\*\*{name}(?:\*\*)?\s*:",' "\n"
+            ")",
+        )
+        assert lint.check(current)
 
 
 def test_da_separator_witness_mutation_fails(tmp_path):

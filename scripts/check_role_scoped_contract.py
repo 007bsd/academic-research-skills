@@ -80,7 +80,18 @@ DA_FINDING_WITNESS = (
     "IDs are unique and dense `C1..Cn`, and are the synthesizer's "
     "machine-addressable adjudication keys. Standalone `**Severity**:` "
     "declarations are forbidden: every DA Critical or Major issue must be a "
-    "row in its matching band table"
+    "row in its matching band table. Do not create any other H4 issue-table band"
+)
+DEFAULT_IGNORABLE_RANGES_WITNESS = (
+    "_DEFAULT_IGNORABLE_RANGES = (\n"
+    "    (0x00AD, 0x00AD), (0x034F, 0x034F), (0x061C, 0x061C),\n"
+    "    (0x115F, 0x1160), (0x17B4, 0x17B5), (0x180B, 0x180F),\n"
+    "    (0x200B, 0x200F), (0x202A, 0x202E), (0x2060, 0x206F),\n"
+    "    (0x3164, 0x3164), (0xFE00, 0xFE0F), (0xFEFF, 0xFEFF),\n"
+    "    (0xFFA0, 0xFFA0), (0xFFF0, 0xFFF8), (0x1BCA0, 0x1BCA3),\n"
+    "    (0x1D173, 0x1D17A),\n"
+    "    (0xE0000, 0xE0FFF),\n"
+    ")"
 )
 PATTERNS = (
     "any <priority> dimension scores '<score>'",
@@ -116,12 +127,58 @@ EXECUTABLE_PATTERN_WITNESSES = (
 PHASE_FINDING_REGEX_WITNESSES = (
     r'r"(?:^|\|\s*)\s*(?:[-*]\s*)?\*\*Severity\*\*:\s*"',
     r'r"(?:^|\|\s*)\s*(?:[-*]\s*)?\*\*Evidence Anchor\*\*:\s*"',
-    r'_SEVERITY_DECL_RE = re.compile(r"\*\*Severity(?:\*\*)?\s*:")',
-    r'_ANCHOR_DECL_RE = re.compile(r"\*\*Evidence Anchor(?:\*\*)?\s*:")',
+    '_SEVERITY_DECL_RE = re.compile(\n'
+    r'    r"\*\*Severity(?:\*\*)?\s*:",' "\n"
+    "    re.IGNORECASE,\n"
+    ")",
+    '_ANCHOR_DECL_RE = re.compile(\n'
+    r'    r"\*\*Evidence Anchor(?:\*\*)?\s*:",' "\n"
+    "    re.IGNORECASE,\n"
+    ")",
     r'_FINDING_H3_RE = re.compile(r"^W[1-9]\d*: \S.*$")',
 )
 DA_PARSER_WITNESSES = (
+    '_DA_SEVERITY_DECL_RE = re.compile(\n'
+    r'    r"\*\*Severity(?:\*\*)?\s*:",' "\n"
+    "    re.IGNORECASE,\n"
+    ")",
     "_DA_SEVERITY_DECL_RE.search(line)",
+    "def _split_gfm_cells(row: str) -> list[str]:",
+    'if char == "|":',
+    "if backslashes % 2 == 0:",
+    "return _split_gfm_cells(stripped[1:-1])",
+    "return _split_gfm_cells(stripped)",
+    "for candidate in lines:",
+    'current_h2 == "Review Body"',
+    "raw_cells = _possible_markdown_cells(candidate)",
+    "for cell in raw_cells",
+    "_rendered_header_cell(cell)",
+    r'rendered = re.sub(r"\\([^\w\s])", r"\1", cell)',
+    r'r"!?\[([^\]]*)\](?:\([^)]+\)|\[[^\]]*\])", r"\1", rendered',
+    r'rendered = re.sub(r"\[([^\]]+)\]", r"\1", rendered)',
+    "parser = _VisibleTextHTMLParser()",
+    "parser.feed(rendered)",
+    'rendered = unicodedata.normalize("NFKC", rendered)\n'
+    '    rendered = "".join(',
+    "def _is_default_ignorable(char: str) -> bool:",
+    "for start, end in _DEFAULT_IGNORABLE_RANGES",
+    DEFAULT_IGNORABLE_RANGES_WITNESS,
+    'unicodedata.category(char) != "Cf"',
+    "and not _is_default_ignorable(char)",
+    'rendered = re.sub(r"[*_~`]+", "", rendered)',
+    'return re.sub(r"\\s+", " ", rendered).strip().casefold()',
+    r'_DA_ISSUE_ID_RE = re.compile(r"^[CM][1-9]\d*$", re.IGNORECASE)',
+    r'r"^(?:text|table|figure|equation|dataset|absence)\s*:",',
+    "issue_payload = any(\n"
+    "            _DA_ISSUE_ID_RE.fullmatch(cell)\n"
+    "            or _DA_TYPED_ANCHOR_RE.search(cell)\n"
+    "            for cell in cells\n"
+    "        )",
+    '_RAW_HTML_TABLE_RE = re.compile(\n'
+    '    r"<\\s*/?\\s*(?:table|thead|tbody|tr|th|td)\\b", re.IGNORECASE\n'
+    ")",
+    "_RAW_HTML_TABLE_RE.search(candidate)",
+    'if "#" in cells or "evidence anchor" in cells or issue_payload:',
     "header_index = nonblank[0] if nonblank else None",
     'header.count("#") != 1 or header.count("Evidence Anchor") != 1',
     're.fullmatch(r":?-{3,}:?", cell)',

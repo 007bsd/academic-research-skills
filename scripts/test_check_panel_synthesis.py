@@ -134,6 +134,21 @@ def test_majority_n2_requires_both_eligible_seats():
 
 
 @pytest.mark.parametrize(
+    "actions",
+    (
+        ("editorial_decision=minor_revision", "editorial_decision=reject"),
+        ("editorial_decision=reject", "editorial_decision=minor_revision"),
+    ),
+)
+def test_equal_severity_tie_uses_earliest_condition(actions):
+    conditions = [
+        {"condition_id": "F1", "severity": 50, "action": actions[0]},
+        {"condition_id": "F2", "severity": 50, "action": actions[1]},
+    ]
+    assert cps.resolve_decision(conditions, {"F1", "F2"}) == actions[0]
+
+
+@pytest.mark.parametrize(
     "expression",
     [
         "any mandatory dimension scores 'block'",
@@ -597,6 +612,333 @@ def test_da_standalone_critical_fails_in_synthesis_path():
     text, expressions = synthesis_for(panel_reports)
     synthesis = cps.parse_synthesis("s.md", text, FULL)
     with pytest.raises(cps.ReportError, match="standalone Severity"):
+        cps.layer2_check(panel_reports, FULL, expressions, synthesis, [])
+
+
+@pytest.mark.parametrize("label", ("severity", "sEvErItY"))
+def test_da_case_variant_standalone_critical_fails_in_synthesis_path(label):
+    panel_reports = reports()
+    da_report = next(report for report in panel_reports if report.role == "da")
+    da_report.text = da_report.text.replace(
+        "#### CRITICAL",
+        "### Further adversarial challenge\n"
+        f"This is **{label}**: Critical and no revision cures it.\n\n"
+        "#### CRITICAL",
+        1,
+    )
+    text, expressions = synthesis_for(panel_reports)
+    synthesis = cps.parse_synthesis("s.md", text, FULL)
+    with pytest.raises(cps.ReportError, match="standalone Severity"):
+        cps.layer2_check(panel_reports, FULL, expressions, synthesis, [])
+
+
+def test_da_extra_issue_table_band_fails_in_synthesis_path():
+    panel_reports = reports()
+    da_report = next(report for report in panel_reports if report.role == "da")
+    da_report.text = da_report.text.replace(
+        "#### MAJOR",
+        "#### ADDITIONAL CRITICAL FINDINGS\n"
+        "| # | Issue | Evidence Anchor |\n"
+        "|---|-------|-----------------|\n"
+        '| C1 | impossible df | text: "n=41" p. 4 |\n\n'
+        "#### MAJOR",
+        1,
+    )
+    text, expressions = synthesis_for(panel_reports)
+    synthesis = cps.parse_synthesis("s.md", text, FULL)
+    with pytest.raises(cps.ReportError, match="unexpected issue-table band"):
+        cps.layer2_check(panel_reports, FULL, expressions, synthesis, [])
+
+
+@pytest.mark.parametrize(
+    ("lead_in", "header"),
+    (
+        ("The following issues invalidate the claim:\n\n",
+         "| # | Issue | Evidence Anchor |"),
+        ("", "| # | Issue | evidence anchor |"),
+        ("", "# | Issue | Evidence Anchor"),
+    ),
+)
+def test_da_disguised_extra_issue_table_band_fails_in_synthesis_path(
+    lead_in, header
+):
+    panel_reports = reports()
+    da_report = next(report for report in panel_reports if report.role == "da")
+    da_report.text = da_report.text.replace(
+        "#### MAJOR",
+        "#### ADDITIONAL CRITICAL FINDINGS\n"
+        f"{lead_in}{header}\n"
+        "|---|-------|-----------------|\n"
+        '| C9 | impossible df | text: "n=41" p. 4 |\n\n'
+        "#### MAJOR",
+        1,
+    )
+    text, expressions = synthesis_for(panel_reports)
+    synthesis = cps.parse_synthesis("s.md", text, FULL)
+    with pytest.raises(cps.ReportError, match="unexpected issue-table band"):
+        cps.layer2_check(panel_reports, FULL, expressions, synthesis, [])
+
+
+@pytest.mark.parametrize("placement", ("preamble", "extra_h2"))
+def test_da_issue_table_outside_canonical_bands_fails_synthesis(placement):
+    panel_reports = reports()
+    da_report = next(report for report in panel_reports if report.role == "da")
+    table = (
+        "| # | Issue | Evidence Anchor |\n"
+        "|---|-------|-----------------|\n"
+        '| C9 | impossible df | text: "n=41" p. 4 |\n'
+    )
+    if placement == "preamble":
+        da_report.text = da_report.text.replace(
+            "#### CRITICAL", table + "\n#### CRITICAL", 1
+        )
+    else:
+        da_report.text += "\n## Appendix\n" + table
+    text, expressions = synthesis_for(panel_reports)
+    synthesis = cps.parse_synthesis("s.md", text, FULL)
+    with pytest.raises(cps.ReportError, match="unexpected issue-table"):
+        cps.layer2_check(panel_reports, FULL, expressions, synthesis, [])
+
+
+def test_da_internal_header_whitespace_fails_in_synthesis_path():
+    panel_reports = reports()
+    da_report = next(report for report in panel_reports if report.role == "da")
+    da_report.text = da_report.text.replace(
+        "#### MAJOR",
+        "#### ADDITIONAL CRITICAL FINDINGS\n"
+        "# | Issue | Evidence   Anchor\n"
+        "---|-------|-----------------\n"
+        'C9 | impossible df | text: "n=41" p. 4\n\n'
+        "#### MAJOR",
+        1,
+    )
+    text, expressions = synthesis_for(panel_reports)
+    synthesis = cps.parse_synthesis("s.md", text, FULL)
+    with pytest.raises(cps.ReportError, match="unexpected issue-table"):
+        cps.layer2_check(panel_reports, FULL, expressions, synthesis, [])
+
+
+@pytest.mark.parametrize(
+    "header",
+    (
+        "| ID | Issue | Evidence Anchor |",
+        "| # | Issue | Evidence |",
+        "| **#** | Issue | **Evidence Anchor** |",
+        "| `#` | Issue | `Evidence Anchor` |",
+    ),
+)
+def test_da_partial_or_formatted_issue_header_fails_synthesis(header):
+    panel_reports = reports()
+    da_report = next(report for report in panel_reports if report.role == "da")
+    da_report.text = da_report.text.replace(
+        "#### MAJOR",
+        "#### ADDITIONAL CRITICAL FINDINGS\n"
+        f"{header}\n"
+        "|---|-------|-----------------|\n"
+        '| C9 | impossible df | text: "n=41" p. 4 |\n\n'
+        "#### MAJOR",
+        1,
+    )
+    text, expressions = synthesis_for(panel_reports)
+    synthesis = cps.parse_synthesis("s.md", text, FULL)
+    with pytest.raises(cps.ReportError, match="unexpected issue-table"):
+        cps.layer2_check(panel_reports, FULL, expressions, synthesis, [])
+
+
+@pytest.mark.parametrize(
+    "header",
+    (
+        "| ID | Issue | [Evidence Anchor][anchor] |",
+        r"| \# | Issue | Evidence |",
+        '| ID | Issue | <span title="x>y">Evidence Anchor</span> |',
+    ),
+)
+def test_da_commonmark_visible_issue_header_fails_synthesis(header):
+    panel_reports = reports()
+    da_report = next(report for report in panel_reports if report.role == "da")
+    da_report.text = da_report.text.replace(
+        "#### MAJOR",
+        "#### ADDITIONAL CRITICAL FINDINGS\n"
+        f"{header}\n"
+        "|---|-------|-----------------|\n"
+        '| C9 | impossible df | text: "n=41" p. 4 |\n\n'
+        "#### MAJOR",
+        1,
+    )
+    text, expressions = synthesis_for(panel_reports)
+    synthesis = cps.parse_synthesis("s.md", text, FULL)
+    with pytest.raises(cps.ReportError, match="unexpected issue-table"):
+        cps.layer2_check(panel_reports, FULL, expressions, synthesis, [])
+
+
+def test_da_balanced_link_destination_header_fails_synthesis():
+    panel_reports = reports()
+    da_report = next(report for report in panel_reports if report.role == "da")
+    header = (
+        r"| [\#](<https://x.test/a(b)>) | Issue | "
+        r"[Evidence Anchor](<https://x.test/a(b)>) |"
+    )
+    da_report.text = da_report.text.replace(
+        "#### MAJOR",
+        "#### ADDITIONAL CRITICAL FINDINGS\n"
+        f"{header}\n"
+        "|---|-------|-----------------|\n"
+        '| C9 | impossible df | text: "n=41" p. 4 |\n\n'
+        "#### MAJOR",
+        1,
+    )
+    text, expressions = synthesis_for(panel_reports)
+    synthesis = cps.parse_synthesis("s.md", text, FULL)
+    with pytest.raises(cps.ReportError, match="unexpected issue-table"):
+        cps.layer2_check(panel_reports, FULL, expressions, synthesis, [])
+
+
+def test_da_typed_anchor_payload_alone_fails_synthesis():
+    panel_reports = reports()
+    da_report = next(report for report in panel_reports if report.role == "da")
+    header = (
+        r"| [\#](<https://x.test/a(b)>) | Issue | "
+        r"[Evidence Anchor](<https://x.test/a(b)>) |"
+    )
+    da_report.text = da_report.text.replace(
+        "#### MAJOR",
+        "#### ADDITIONAL CRITICAL FINDINGS\n"
+        f"{header}\n"
+        "|---|-------|-----------------|\n"
+        '| 1 | impossible df | `text: "n=41" p. 4` |\n\n'
+        "#### MAJOR",
+        1,
+    )
+    text, expressions = synthesis_for(panel_reports)
+    synthesis = cps.parse_synthesis("s.md", text, FULL)
+    with pytest.raises(cps.ReportError, match="unexpected issue-table"):
+        cps.layer2_check(panel_reports, FULL, expressions, synthesis, [])
+
+
+def test_da_escaped_pipe_cell_evasion_fails_synthesis():
+    panel_reports = reports()
+    da_report = next(report for report in panel_reports if report.role == "da")
+    block = (
+        "#### ADDITIONAL CRITICAL FINDINGS\n"
+        r"| [\#<!--\|-->](https://x.test) | Issue | "
+        r"[Evidence<!--\|--> Anchor](https://x.test) |" "\n"
+        "|---|---|---|\n"
+        r"| [C<!--\|-->9](https://x.test) | impossible df | "
+        r'[text<!--\|-->: "n=41" p. 4](https://x.test) |' "\n\n"
+    )
+    da_report.text = da_report.text.replace(
+        "#### MAJOR", block + "#### MAJOR", 1
+    )
+    text, expressions = synthesis_for(panel_reports)
+    synthesis = cps.parse_synthesis("s.md", text, FULL)
+    with pytest.raises(cps.ReportError, match="unexpected issue-table"):
+        cps.layer2_check(panel_reports, FULL, expressions, synthesis, [])
+
+
+def test_da_canonical_rows_allow_escaped_pipes():
+    text = report_text("da", da_ids=("C1",)).replace(
+        "| C1 | Issue |",
+        r"| C1 | Issue \| detail |",
+        1,
+    )
+    text += "\n" + r'| M1 | Issue \| detail | text: "quoted evidence" p. 1 |'
+    critical, major = cps.parse_da_tables(text, "da.md")
+    assert list(critical) == ["C1"]
+    assert major == ['text: "quoted evidence" p. 1']
+
+
+@pytest.mark.parametrize(
+    "invisible", ("\u0600", "\u200b", "\u034f", "\ufe0e", "\u3164", "\ufff0")
+)
+def test_da_invisible_issue_payload_fails_synthesis(invisible):
+    panel_reports = reports()
+    da_report = next(report for report in panel_reports if report.role == "da")
+    block = (
+        "#### ADDITIONAL CRITICAL FINDINGS\n"
+        f"| #{invisible} | Issue | Evidence{invisible} Anchor |\n"
+        "|---|---|---|\n"
+        f'| C{invisible}9 | impossible df | text{invisible}: "n=41" p. 4 |\n\n'
+    )
+    da_report.text = da_report.text.replace(
+        "#### MAJOR", block + "#### MAJOR", 1
+    )
+    text, expressions = synthesis_for(panel_reports)
+    synthesis = cps.parse_synthesis("s.md", text, FULL)
+    with pytest.raises(cps.ReportError, match="unexpected issue-table"):
+        cps.layer2_check(panel_reports, FULL, expressions, synthesis, [])
+
+
+def test_da_fullwidth_issue_payload_fails_synthesis():
+    panel_reports = reports()
+    da_report = next(report for report in panel_reports if report.role == "da")
+    block = (
+        "#### ADDITIONAL CRITICAL FINDINGS\n"
+        "| ＃ | Issue | Ｅｖｉｄｅｎｃｅ Ａｎｃｈｏｒ |\n"
+        "|---|---|---|\n"
+        '| Ｃ９ | impossible df | ｔｅｘｔ： "n=41" p. 4 |\n\n'
+    )
+    da_report.text = da_report.text.replace(
+        "#### MAJOR", block + "#### MAJOR", 1
+    )
+    text, expressions = synthesis_for(panel_reports)
+    synthesis = cps.parse_synthesis("s.md", text, FULL)
+    with pytest.raises(cps.ReportError, match="unexpected issue-table"):
+        cps.layer2_check(panel_reports, FULL, expressions, synthesis, [])
+
+
+def test_da_raw_html_issue_table_fails_synthesis():
+    panel_reports = reports()
+    da_report = next(report for report in panel_reports if report.role == "da")
+    block = (
+        "#### ADDITIONAL CRITICAL FINDINGS\n"
+        "<table><tr><th>ID</th><th>Evidence</th></tr>"
+        "<tr><td>C9</td><td>text: n=41</td></tr></table>\n\n"
+    )
+    da_report.text = da_report.text.replace(
+        "#### MAJOR", block + "#### MAJOR", 1
+    )
+    text, expressions = synthesis_for(panel_reports)
+    synthesis = cps.parse_synthesis("s.md", text, FULL)
+    with pytest.raises(cps.ReportError, match="raw HTML issue-table"):
+        cps.layer2_check(panel_reports, FULL, expressions, synthesis, [])
+
+
+def test_da_nested_html_issue_table_in_canonical_row_fails_synthesis():
+    panel_reports = reports()
+    da_report = next(report for report in panel_reports if report.role == "da")
+    nested = (
+        "real issue <table><tr><th>#</th><th>Evidence Anchor</th></tr>"
+        '<tr><td>C9</td><td>text: "impossible df" p. 4</td></tr></table>'
+    )
+    da_report.text = da_report.text.replace(
+        "#### MAJOR\n"
+        "| # | Issue | Evidence Anchor |\n"
+        "|---|-------|-----------------|",
+        "#### MAJOR\n"
+        "| # | Issue | Evidence Anchor |\n"
+        "|---|-------|-----------------|\n"
+        f'| M1 | {nested} | text: "quote" p. 1 |',
+        1,
+    )
+    text, expressions = synthesis_for(panel_reports)
+    synthesis = cps.parse_synthesis("s.md", text, FULL)
+    with pytest.raises(cps.ReportError, match="raw HTML issue-table"):
+        cps.layer2_check(panel_reports, FULL, expressions, synthesis, [])
+
+
+def test_da_bare_html_row_fails_synthesis():
+    panel_reports = reports()
+    da_report = next(report for report in panel_reports if report.role == "da")
+    block = (
+        "#### ADDITIONAL CRITICAL FINDINGS\n"
+        "<tr><td>C9</td><td>text: n=41</td></tr>\n\n"
+    )
+    da_report.text = da_report.text.replace(
+        "#### MAJOR", block + "#### MAJOR", 1
+    )
+    text, expressions = synthesis_for(panel_reports)
+    synthesis = cps.parse_synthesis("s.md", text, FULL)
+    with pytest.raises(cps.ReportError, match="raw HTML issue-table"):
         cps.layer2_check(panel_reports, FULL, expressions, synthesis, [])
 
 

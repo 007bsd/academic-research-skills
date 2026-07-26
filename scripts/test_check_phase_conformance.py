@@ -632,6 +632,30 @@ def test_flat_severity_without_finding_heading_fails():
         phase.check_scoring_seat_anchors(report)
 
 
+@pytest.mark.parametrize("label", ("severity", "sEvErItY"))
+def test_case_variant_severity_without_finding_heading_fails(label):
+    report, _ = parse_report(
+        "eic",
+        body=f"Commentary line with **{label}**: Critical",
+    )
+    with pytest.raises(phase.ConformanceError, match="own ### finding"):
+        phase.check_scoring_seat_anchors(report)
+
+
+@pytest.mark.parametrize("label", ("evidence anchor", "eViDeNcE aNcHoR"))
+def test_case_variant_optional_anchor_declaration_fails(label):
+    report, _ = parse_report(
+        "eic",
+        body=(
+            "### W1: malformed optional anchor\n"
+            "**Severity**: Minor\n"
+            f'**{label}**: text: "quote"'
+        ),
+    )
+    with pytest.raises(phase.ConformanceError, match="FINDING-GRAMMAR"):
+        phase.check_scoring_seat_anchors(report)
+
+
 def test_missing_review_body_fails_anchor_family():
     report, _ = parse_report("eic")
     report.text = report.text.replace("## Review Body", "## Commentary")
@@ -740,6 +764,260 @@ def test_da_standalone_critical_fails_phase_checker():
     )
     report = panel.parse_report("da.md", text, FULL)
     with pytest.raises(phase.ConformanceError, match="standalone Severity"):
+        phase.check_da_anchors(report)
+
+
+@pytest.mark.parametrize("label", ("severity", "sEvErItY"))
+def test_da_case_variant_standalone_critical_fails_phase_checker(label):
+    text = da_text().replace(
+        "#### CRITICAL",
+        "### Further adversarial challenge\n"
+        f"This is **{label}**: Critical and no revision cures it.\n\n"
+        "#### CRITICAL",
+        1,
+    )
+    report = panel.parse_report("da.md", text, FULL)
+    with pytest.raises(phase.ConformanceError, match="standalone Severity"):
+        phase.check_da_anchors(report)
+
+
+def test_da_extra_issue_table_band_fails_phase_checker():
+    text = da_text().replace(
+        "#### MAJOR",
+        "#### ADDITIONAL CRITICAL FINDINGS\n"
+        "| # | Issue | Evidence Anchor |\n"
+        "|---|-------|-----------------|\n"
+        '| C1 | impossible df | text: "n=41" p. 4 |\n\n'
+        "#### MAJOR",
+        1,
+    )
+    report = panel.parse_report("da.md", text, FULL)
+    with pytest.raises(
+        phase.ConformanceError, match="unexpected issue-table band"
+    ):
+        phase.check_da_anchors(report)
+
+
+@pytest.mark.parametrize(
+    ("lead_in", "header"),
+    (
+        ("The following issues invalidate the claim:\n\n",
+         "| # | Issue | Evidence Anchor |"),
+        ("", "| # | Issue | evidence anchor |"),
+        ("", "# | Issue | Evidence Anchor"),
+    ),
+)
+def test_da_disguised_extra_issue_table_band_fails_phase_checker(
+    lead_in, header
+):
+    text = da_text().replace(
+        "#### MAJOR",
+        "#### ADDITIONAL CRITICAL FINDINGS\n"
+        f"{lead_in}{header}\n"
+        "|---|-------|-----------------|\n"
+        '| C9 | impossible df | text: "n=41" p. 4 |\n\n'
+        "#### MAJOR",
+        1,
+    )
+    report = panel.parse_report("da.md", text, FULL)
+    with pytest.raises(
+        phase.ConformanceError, match="unexpected issue-table band"
+    ):
+        phase.check_da_anchors(report)
+
+
+@pytest.mark.parametrize("placement", ("preamble", "extra_h2"))
+def test_da_issue_table_outside_canonical_bands_fails_phase(placement):
+    table = (
+        "| # | Issue | Evidence Anchor |\n"
+        "|---|-------|-----------------|\n"
+        '| C9 | impossible df | text: "n=41" p. 4 |\n'
+    )
+    text = da_text()
+    if placement == "preamble":
+        text = text.replace("#### CRITICAL", table + "\n#### CRITICAL", 1)
+    else:
+        text += "\n## Appendix\n" + table
+    report = panel.parse_report("da.md", text, FULL)
+    with pytest.raises(phase.ConformanceError, match="unexpected issue-table"):
+        phase.check_da_anchors(report)
+
+
+def test_da_internal_header_whitespace_fails_phase_checker():
+    text = da_text().replace(
+        "#### MAJOR",
+        "#### ADDITIONAL CRITICAL FINDINGS\n"
+        "# | Issue | Evidence   Anchor\n"
+        "---|-------|-----------------\n"
+        'C9 | impossible df | text: "n=41" p. 4\n\n'
+        "#### MAJOR",
+        1,
+    )
+    report = panel.parse_report("da.md", text, FULL)
+    with pytest.raises(phase.ConformanceError, match="unexpected issue-table"):
+        phase.check_da_anchors(report)
+
+
+@pytest.mark.parametrize(
+    "header",
+    (
+        "| ID | Issue | Evidence Anchor |",
+        "| # | Issue | Evidence |",
+        "| **#** | Issue | **Evidence Anchor** |",
+        "| `#` | Issue | `Evidence Anchor` |",
+    ),
+)
+def test_da_partial_or_formatted_issue_header_fails_phase(header):
+    text = da_text().replace(
+        "#### MAJOR",
+        "#### ADDITIONAL CRITICAL FINDINGS\n"
+        f"{header}\n"
+        "|---|-------|-----------------|\n"
+        '| C9 | impossible df | text: "n=41" p. 4 |\n\n'
+        "#### MAJOR",
+        1,
+    )
+    report = panel.parse_report("da.md", text, FULL)
+    with pytest.raises(phase.ConformanceError, match="unexpected issue-table"):
+        phase.check_da_anchors(report)
+
+
+@pytest.mark.parametrize(
+    "header",
+    (
+        "| ID | Issue | [Evidence Anchor][anchor] |",
+        r"| \# | Issue | Evidence |",
+        '| ID | Issue | <span title="x>y">Evidence Anchor</span> |',
+    ),
+)
+def test_da_commonmark_visible_issue_header_fails_phase(header):
+    text = da_text().replace(
+        "#### MAJOR",
+        "#### ADDITIONAL CRITICAL FINDINGS\n"
+        f"{header}\n"
+        "|---|-------|-----------------|\n"
+        '| C9 | impossible df | text: "n=41" p. 4 |\n\n'
+        "#### MAJOR",
+        1,
+    )
+    report = panel.parse_report("da.md", text, FULL)
+    with pytest.raises(phase.ConformanceError, match="unexpected issue-table"):
+        phase.check_da_anchors(report)
+
+
+def test_da_balanced_link_destination_header_fails_phase():
+    header = (
+        r"| [\#](<https://x.test/a(b)>) | Issue | "
+        r"[Evidence Anchor](<https://x.test/a(b)>) |"
+    )
+    text = da_text().replace(
+        "#### MAJOR",
+        "#### ADDITIONAL CRITICAL FINDINGS\n"
+        f"{header}\n"
+        "|---|-------|-----------------|\n"
+        '| C9 | impossible df | text: "n=41" p. 4 |\n\n'
+        "#### MAJOR",
+        1,
+    )
+    report = panel.parse_report("da.md", text, FULL)
+    with pytest.raises(phase.ConformanceError, match="unexpected issue-table"):
+        phase.check_da_anchors(report)
+
+
+def test_da_typed_anchor_payload_alone_fails_phase():
+    header = (
+        r"| [\#](<https://x.test/a(b)>) | Issue | "
+        r"[Evidence Anchor](<https://x.test/a(b)>) |"
+    )
+    text = da_text().replace(
+        "#### MAJOR",
+        "#### ADDITIONAL CRITICAL FINDINGS\n"
+        f"{header}\n"
+        "|---|-------|-----------------|\n"
+        '| 1 | impossible df | `text: "n=41" p. 4` |\n\n'
+        "#### MAJOR",
+        1,
+    )
+    report = panel.parse_report("da.md", text, FULL)
+    with pytest.raises(phase.ConformanceError, match="unexpected issue-table"):
+        phase.check_da_anchors(report)
+
+
+def test_da_escaped_pipe_cell_evasion_fails_phase():
+    block = (
+        "#### ADDITIONAL CRITICAL FINDINGS\n"
+        r"| [\#<!--\|-->](https://x.test) | Issue | "
+        r"[Evidence<!--\|--> Anchor](https://x.test) |" "\n"
+        "|---|---|---|\n"
+        r"| [C<!--\|-->9](https://x.test) | impossible df | "
+        r'[text<!--\|-->: "n=41" p. 4](https://x.test) |' "\n\n"
+    )
+    text = da_text().replace("#### MAJOR", block + "#### MAJOR", 1)
+    report = panel.parse_report("da.md", text, FULL)
+    with pytest.raises(phase.ConformanceError, match="unexpected issue-table"):
+        phase.check_da_anchors(report)
+
+
+@pytest.mark.parametrize(
+    "invisible", ("\u0600", "\u200b", "\u034f", "\ufe0e", "\u3164", "\ufff0")
+)
+def test_da_invisible_issue_payload_fails_phase(invisible):
+    block = (
+        "#### ADDITIONAL CRITICAL FINDINGS\n"
+        f"| #{invisible} | Issue | Evidence{invisible} Anchor |\n"
+        "|---|---|---|\n"
+        f'| C{invisible}9 | impossible df | text{invisible}: "n=41" p. 4 |\n\n'
+    )
+    text = da_text().replace("#### MAJOR", block + "#### MAJOR", 1)
+    report = panel.parse_report("da.md", text, FULL)
+    with pytest.raises(phase.ConformanceError, match="unexpected issue-table"):
+        phase.check_da_anchors(report)
+
+
+def test_da_fullwidth_issue_payload_fails_phase():
+    block = (
+        "#### ADDITIONAL CRITICAL FINDINGS\n"
+        "| ＃ | Issue | Ｅｖｉｄｅｎｃｅ Ａｎｃｈｏｒ |\n"
+        "|---|---|---|\n"
+        '| Ｃ９ | impossible df | ｔｅｘｔ： "n=41" p. 4 |\n\n'
+    )
+    text = da_text().replace("#### MAJOR", block + "#### MAJOR", 1)
+    report = panel.parse_report("da.md", text, FULL)
+    with pytest.raises(phase.ConformanceError, match="unexpected issue-table"):
+        phase.check_da_anchors(report)
+
+
+def test_da_raw_html_issue_table_fails_phase():
+    block = (
+        "#### ADDITIONAL CRITICAL FINDINGS\n"
+        "<table><tr><th>ID</th><th>Evidence</th></tr>"
+        "<tr><td>C9</td><td>text: n=41</td></tr></table>\n\n"
+    )
+    text = da_text().replace("#### MAJOR", block + "#### MAJOR", 1)
+    report = panel.parse_report("da.md", text, FULL)
+    with pytest.raises(phase.ConformanceError, match="raw HTML issue-table"):
+        phase.check_da_anchors(report)
+
+
+def test_da_nested_html_issue_table_in_canonical_row_fails_phase():
+    nested = (
+        "real issue <table><tr><th>#</th><th>Evidence Anchor</th></tr>"
+        '<tr><td>C9</td><td>text: "impossible df" p. 4</td></tr></table>'
+    )
+    text = da_text().replace("Issue | text:", nested + " | text:", 1)
+    report = panel.parse_report("da.md", text, FULL)
+    with pytest.raises(phase.ConformanceError, match="raw HTML issue-table"):
+        phase.check_da_anchors(report)
+
+
+def test_da_bare_html_row_fails_phase():
+    block = (
+        "#### ADDITIONAL CRITICAL FINDINGS\n"
+        "<tr><td>C9</td><td>text: n=41</td></tr>\n\n"
+    )
+    text = da_text().replace("#### MAJOR", block + "#### MAJOR", 1)
+    report = panel.parse_report("da.md", text, FULL)
+    with pytest.raises(phase.ConformanceError, match="raw HTML issue-table"):
         phase.check_da_anchors(report)
 
 

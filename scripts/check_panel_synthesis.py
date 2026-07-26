@@ -19,7 +19,9 @@ import hashlib
 import json
 import re
 import sys
+import unicodedata
 from dataclasses import dataclass
+from html.parser import HTMLParser
 from pathlib import Path
 
 sys.path.insert(0, str(Path(__file__).resolve().parent))
@@ -110,8 +112,25 @@ _RETIRED_DECISION_RE = re.compile(
     r"^\s*editorial_decision=\S+\s*$", re.IGNORECASE
 )
 _DA_SEVERITY_DECL_RE = re.compile(
-    r"(?:^|\|\s*)\s*(?:[-*]\s*)?\*\*Severity(?:\*\*)?\s*:",
+    r"\*\*Severity(?:\*\*)?\s*:",
     re.IGNORECASE,
+)
+_DA_ISSUE_ID_RE = re.compile(r"^[CM][1-9]\d*$", re.IGNORECASE)
+_DA_TYPED_ANCHOR_RE = re.compile(
+    r"^(?:text|table|figure|equation|dataset|absence)\s*:",
+    re.IGNORECASE,
+)
+_RAW_HTML_TABLE_RE = re.compile(
+    r"<\s*/?\s*(?:table|thead|tbody|tr|th|td)\b", re.IGNORECASE
+)
+_DEFAULT_IGNORABLE_RANGES = (
+    (0x00AD, 0x00AD), (0x034F, 0x034F), (0x061C, 0x061C),
+    (0x115F, 0x1160), (0x17B4, 0x17B5), (0x180B, 0x180F),
+    (0x200B, 0x200F), (0x202A, 0x202E), (0x2060, 0x206F),
+    (0x3164, 0x3164), (0xFE00, 0xFE0F), (0xFEFF, 0xFEFF),
+    (0xFFA0, 0xFFA0), (0xFFF0, 0xFFF8), (0x1BCA0, 0x1BCA3),
+    (0x1D173, 0x1D17A),
+    (0xE0000, 0xE0FFF),
 )
 
 
@@ -183,11 +202,76 @@ def exactly_one(
     return hits[0] if hits else None
 
 
+def _split_gfm_cells(row: str) -> list[str]:
+    cells: list[str] = []
+    current: list[str] = []
+    for char in row:
+        if char == "|":
+            backslashes = 0
+            for previous in reversed(current):
+                if previous != "\\":
+                    break
+                backslashes += 1
+            if backslashes % 2 == 0:
+                cells.append("".join(current).strip())
+                current = []
+                continue
+        current.append(char)
+    cells.append("".join(current).strip())
+    return cells
+
+
 def _markdown_cells(line: str) -> list[str]:
     stripped = line.strip()
     if not stripped.startswith("|") or not stripped.endswith("|"):
         return []
-    return [cell.strip() for cell in stripped[1:-1].split("|")]
+    return _split_gfm_cells(stripped[1:-1])
+
+
+def _possible_markdown_cells(line: str) -> list[str]:
+    """Return cells from either outer-pipe or pipe-less GFM table rows."""
+    stripped = line.strip()
+    if "|" not in stripped:
+        return []
+    if stripped.startswith("|"):
+        stripped = stripped[1:]
+    if stripped.endswith("|"):
+        stripped = stripped[:-1]
+    return _split_gfm_cells(stripped)
+
+
+class _VisibleTextHTMLParser(HTMLParser):
+    def __init__(self) -> None:
+        super().__init__(convert_charrefs=True)
+        self.parts: list[str] = []
+
+    def handle_data(self, data: str) -> None:
+        self.parts.append(data)
+
+
+def _is_default_ignorable(char: str) -> bool:
+    codepoint = ord(char)
+    return any(start <= codepoint <= end for start, end in _DEFAULT_IGNORABLE_RANGES)
+
+
+def _rendered_header_cell(cell: str) -> str:
+    """Normalize common inline Markdown wrappers to their visible cell text."""
+    rendered = re.sub(r"\\([^\w\s])", r"\1", cell)
+    rendered = re.sub(
+        r"!?\[([^\]]*)\](?:\([^)]+\)|\[[^\]]*\])", r"\1", rendered
+    )
+    rendered = re.sub(r"\[([^\]]+)\]", r"\1", rendered)
+    parser = _VisibleTextHTMLParser()
+    parser.feed(rendered)
+    rendered = "".join(parser.parts)
+    rendered = unicodedata.normalize("NFKC", rendered)
+    rendered = "".join(
+        char for char in rendered
+        if unicodedata.category(char) != "Cf"
+        and not _is_default_ignorable(char)
+    )
+    rendered = re.sub(r"[*_~`]+", "", rendered)
+    return re.sub(r"\s+", " ", rendered).strip().casefold()
 
 
 def validate_evidence_anchor(anchor: str, context: str) -> None:
@@ -295,7 +379,7 @@ def parse_da_tables(
             f"[DA-TABLE-PARSE: {path}: expected exactly one ## Review Body]"
         )
     review_lines = sections["Review Body"]
-    if any(_DA_SEVERITY_DECL_RE.search(line) for line in review_lines):
+    if any(_DA_SEVERITY_DECL_RE.search(line) for line in lines):
         raise ReportError(
             f"[DA-FINDING-GRAMMAR: {path}: standalone Severity declarations "
             "are forbidden; use the CRITICAL and MAJOR issue tables]"
@@ -306,6 +390,41 @@ def parse_da_tables(
     major_lines, major_id_col, major_anchor_col = _parse_da_table_block(
         review_lines, "MAJOR", path
     )
+    current_h2: str | None = None
+    in_canonical_da_band = False
+    for candidate in lines:
+        if h2_match := _H2_RE.fullmatch(candidate):
+            current_h2 = h2_match.group(1)
+            in_canonical_da_band = False
+            continue
+        if _H3_RE.fullmatch(candidate):
+            in_canonical_da_band = False
+            continue
+        if h4_match := _H4_RE.fullmatch(candidate):
+            in_canonical_da_band = (
+                current_h2 == "Review Body"
+                and h4_match.group(1) in {"CRITICAL", "MAJOR"}
+            )
+            continue
+        if _RAW_HTML_TABLE_RE.search(candidate):
+            raise ReportError(
+                f"[DA-TABLE-PARSE: {path}: unexpected raw HTML issue-table "
+                "surface outside the canonical CRITICAL and MAJOR bands]"
+            )
+        if in_canonical_da_band:
+            continue
+        raw_cells = _possible_markdown_cells(candidate)
+        cells = {_rendered_header_cell(cell) for cell in raw_cells}
+        issue_payload = any(
+            _DA_ISSUE_ID_RE.fullmatch(cell)
+            or _DA_TYPED_ANCHOR_RE.search(cell)
+            for cell in cells
+        )
+        if "#" in cells or "evidence anchor" in cells or issue_payload:
+            raise ReportError(
+                f"[DA-TABLE-PARSE: {path}: unexpected issue-table band outside "
+                "the canonical CRITICAL and MAJOR bands]"
+            )
 
     rows: dict[str, str] = {}
     for cells in critical_lines:
