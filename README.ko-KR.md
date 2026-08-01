@@ -334,6 +334,8 @@ https://github.com/Imbad0202/academic-research-skills
 
 **[Yaobin29](https://github.com/Yaobin29)** — 기여자. [PR #433](https://github.com/Imbad0202/academic-research-skills/pull/433)에서 리뷰어 응답 도구를 제안했습니다. `deep-research three-way-scan` 모드와 `academic-paper rebuttal-audit` 모드(해당 PR의 `audit` 개념을 발전시킨 기능)가 v3.12.1에서 정식으로 통합되었습니다.
 
+**[ktao732084-arch](https://github.com/ktao732084-arch)** — 기여자. `academic-paper`의 disclosure 시스템에 9개의 의학 출판 정책 대상, 대상별 필수 사실 입력 수집, fail-closed 독립형 렌더링을 추가해 확장했습니다([Issue #596](https://github.com/Imbad0202/academic-research-skills/issues/596), [PR #599](https://github.com/Imbad0202/academic-research-skills/pull/599)).
+
 ---
 
 ## 변경 이력
@@ -593,7 +595,7 @@ Lu et al. (2026, *Nature* 651:914-919) — 블라인드 동료 심사를 통과�
 
 - **7-mode AI Research Failure Mode Checklist** — 의심되는 구현 버그, 환각된 결과, 지름길 의존, 버그를 통찰로, 방법론 날조, 프레임 고착에 대해 Stage 2.5/4.5에서 파이프라인을 차단. 기존 5종 인용 환각 분류를 확장.
 - **Reviewer Calibration Mode**(academic-paper-reviewer v1.8) — 사용자 제공 골드셋에 대한 옵트인 FNR/FPR/balanced-accuracy 측정. 5× ensembling, 교차 모델 기본 ON, 세션 범위 신뢰도 공개.
-- **Disclosure Mode**(academic-paper v2.9) — venue별 AI 사용 명시문 생성기. v1은 ICLR, NeurIPS, Nature, Science, ACL, EMNLP 커버.
+- **Disclosure Mode**(academic-paper v2.9) — 기본 venue 경로는 `REQUIRED`, `ACTION_ONLY`, `NOT_REQUIRED`, `UNKNOWN` 적용성 결과와 필요한 경우 명시적 유형화 중단 상태를 반환하고, policy-anchor 경로는 별도의 anchor 전용 렌더링 계약을 사용. v1은 ICLR, NeurIPS, Nature, Science, ACL, EMNLP 커버. (이후 확장: v2 데이터베이스(#596)는 9개 의학 출판 정책 대상 — ICMJE, NEJM, The Lancet, JAMA, BMJ, PLOS, Frontiers, 그리고 데이터베이스 최초의 중국어 정책 대상 2건(출판사 전체에 적용되는 中华护理杂志社 항목과 단일 저널 国际眼科杂志) — 을 추가.)
 - **Early-Stopping Criterion**(academic-pipeline v3.1) — 파이프라인 시작 시 수렴 점검 + 예산 투명성.
 - **Fidelity-Originality Mode Spectrum** — Lu 2026 Fig 1c에 따라 3개 스킬 전반의 모든 모드를 분류.
 - 새 버전: academic-paper v2.9, academic-paper-reviewer v1.8, academic-pipeline v3.1
